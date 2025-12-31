@@ -1,0 +1,233 @@
+﻿"""
+LLM Service - ?游? ecogrid ??Ollama LLM Agent
+"""
+
+import sys
+from pathlib import Path
+from typing import Dict, Any, Optional
+from datetime import datetime, timedelta
+from loguru import logger
+
+# Import ecogrid modules
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
+from ecogrid.llm.agent import EcoGridAuditAgent
+
+
+class LLMService:
+    """LLM 撖抵???"""
+    
+    def __init__(self):
+        self.agent: Optional[EcoGridAuditAgent] = None
+    
+    def initialize(self):
+        """????LLM Agent"""
+        if self.agent is None:
+            logger.info("Initializing LLM Service...")
+            self.agent = EcoGridAuditAgent()
+            
+            # 皜祈岫??
+            if not self.agent.test_connection():
+                logger.warning("Ollama connection failed - LLM features may not work")
+            else:
+                logger.info("LLM Service initialized with Ollama")
+    
+    def generate_report(
+        self,
+        report_type: str,
+        start_date: datetime,
+        end_date: datetime,
+        power_data: Dict[str, Any]
+    ) -> str:
+        """
+        ??撖抵??勗?
+        
+        Args:
+            report_type: ?勗?憿?
+            start_date: ???交?
+            end_date: 蝯??交?
+            power_data: ?餃??豢???
+            
+        Returns:
+            Markdown ?澆??勗?
+        """
+        self.initialize()
+        
+        logger.info(f"Generating {report_type} audit report...")
+        
+        # 瑽遣 prompt
+        prompt = self._build_report_prompt(
+            report_type, 
+            start_date, 
+            end_date, 
+            power_data
+        )
+        
+        # 雿輻 LLM ???勗?
+        if self.agent:
+            try:
+                response = self.agent.generate_audit_report(prompt)
+                return response
+            except Exception as e:
+                logger.error(f"LLM generation failed: {e}")
+                return self._generate_fallback_report(report_type, start_date, end_date, power_data)
+        else:
+            return self._generate_fallback_report(report_type, start_date, end_date, power_data)
+    
+    def query(self, user_query: str, context: Dict[str, Any]) -> str:
+        """
+        鈭?撘閰ｇ??湔雿輻 LLM嚗??? Agent嚗?
+        
+        Args:
+            user_query: ?冽??
+            context: 銝????
+            
+        Returns:
+            LLM ??
+        """
+        self.initialize()
+        
+        logger.info(f"Processing query: {user_query}")
+        
+        if not self.agent:
+            return "LLM ???芸???隢Ⅱ隤?Ollama ?臬??"
+        
+        try:
+            # 撘瑕雿輻?湔 LLM嚗?雿輻 Agent Executor嚗?
+            if not hasattr(self.agent, 'llm') or not self.agent.llm:
+                return "LLM ?芣迤蝣箏?憪?"
+            
+            from langchain_core.messages import SystemMessage, HumanMessage
+            
+            # 瑽遣銝??縑??
+            context_info = ""
+            if context and 'recent_data' in context and context['recent_data']:
+                latest = context['recent_data'][-1]
+                context_info = f"""
+
+**?嗅?蝟餌絞?單??豢?嚗?*
+- ?嗅?鞎?嚗latest.get('load_kw', 0):.2f} kW
+- 憭芷?賜?鳴?{latest.get('solar_kw', 0):.2f} kW  
+- 憸刻?潮嚗latest.get('wind_kw', 0):.2f} kW
+- 蝬蝮賜?鳴?{latest.get('solar_kw', 0) + latest.get('wind_kw', 0):.2f} kW
+- ?餃?挾嚗latest.get('tou_period', 'N/A')}
+- ?嗅??餃嚗latest.get('tariff', 0):.2f} NTD/kWh
+"""
+            
+            system_prompt = f"""雿 EcoGrid ?箄?餌雯蝟餌絞??璆?AI ?拇???
+
+**雿??瑁痊嚗?*
+1. ??冽???嗅??券?瘜?
+2. ??蝭?賢?遣霅?
+3. 閫??蝬雿輻??
+4. ???券?賊???
+
+**??閬?嚗?*
+- 雿輻皜??璆剔?蝜?銝剜?
+- ???琿??豢?????
+- 蝯血撖衣?遣霅?
+- 靽?蝪⊥???嚗?-5?亥店嚗?
+
+{context_info}
+
+隢?誑銝???蝑?嗅?憿?""
+
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_query)
+            ]
+            
+            logger.info(f"Calling Ollama LLM directly with query: {user_query[:50]}...")
+            response = self.agent.llm.invoke(messages)
+            
+            result = response.content if hasattr(response, 'content') else str(response)
+            
+            # 蝣箔? UTF-8 蝺函Ⅳ
+            if isinstance(result, bytes):
+                result = result.decode('utf-8', errors='replace')
+            
+            logger.info(f"LLM response received: {result[:100]}...")
+            return result
+                    
+        except Exception as e:
+            logger.error(f"Query failed: {e}", exc_info=True)
+            return f"?望?嚗閰Ｗ仃??{str(e)}"
+    
+    def _build_report_prompt(
+        self,
+        report_type: str,
+        start_date: datetime,
+        end_date: datetime,
+        data: Dict[str, Any]
+    ) -> str:
+        """瑽遣?勗? prompt"""
+        return f"""隢?誑銝????隞賢?璆剔??券撖抵??勗?嚗?
+
+?勗?憿?: {report_type}
+??: {start_date.strftime('%Y-%m-%d')} ??{end_date.strftime('%Y-%m-%d')}
+
+?券?豢?:
+- 蝮賜?駁?: {data.get('total_consumption_kwh', 0):.2f} kWh
+- 蝮賡鞎? NTD {data.get('total_cost_ntd', 0):,.2f}
+- 蝬瘥?: {data.get('renewable_ratio', 0):.1f}%
+- 蝣單??? {data.get('carbon_emission_kg', 0):.2f} kg CO2
+- 撟喳?鞎?: {data.get('avg_load_kw', 0):.2f} kW
+- 撜啣潸?頛? {data.get('peak_load_kw', 0):.2f} kW
+
+隢誑 Markdown ?澆?頛詨嚗??恬?
+1. ??
+2. ?券??
+3. ???
+4. 蝭?賢遣霅?
+5. 蝣單??曇?隡?
+"""
+    
+    def _generate_fallback_report(
+        self,
+        report_type: str,
+        start_date: datetime,
+        end_date: datetime,
+        data: Dict[str, Any]
+    ) -> str:
+        """Fallback ?勗?嚗 LLM 銝?冽?嚗?""
+        return f"""# {report_type.upper()} ?券撖抵??勗?
+
+## ?勗???
+{start_date.strftime('%Y-%m-%d')} ??{end_date.strftime('%Y-%m-%d')}
+
+## ?券??
+
+### 蝮賜?駁?
+- **{data.get('total_consumption_kwh', 0):,.2f} kWh**
+
+### 蝮賡鞎?
+- **NTD {data.get('total_cost_ntd', 0):,.2f}**
+
+### 蝬瘥?
+- **{data.get('renewable_ratio', 0):.1f}%**
+  - 憭芷?? {data.get('solar_ratio', 0):.1f}%
+  - 憸典?: {data.get('wind_ratio', 0):.1f}%
+
+### 蝣單???
+- **{data.get('carbon_emission_kg', 0):,.2f} kg CO2**
+
+## 鞎???
+
+- 撟喳?鞎?: {data.get('avg_load_kw', 0):.2f} kW
+- 撜啣潸?頛? {data.get('peak_load_kw', 0):.2f} kW
+- ?Ｗ陸鞎?: {data.get('offpeak_load_kw', 0):.2f} kW
+
+## 蝭?賢遣霅?
+
+1. **??蝬瘥?**: ?桀?蝬瘥???{data.get('renewable_ratio', 0):.1f}%嚗遣霅啣??云?質?踹捆??
+2. **?芸????餃**: 撱箄降撠??閮剖?蝘餉?Ｗ陸?挾??
+3. **摰??脰蝟餌絞**: ?臬?Ｗ陸?挾?嚗?撜唳?畾菜?鳴??????餉祥
+
+---
+
+*甇文? EcoGrid Audit Predict ?芸???*
+"""
+
+
+# Global instance
+llm_service = LLMService()
+

@@ -1,0 +1,98 @@
+<template>
+  <div class="bg-white rounded-lg shadow-sm p-6">
+    <h2 class="text-xl font-bold mb-4">💬 Chat Assistant</h2>
+    
+    <!-- Messages -->
+    <div class="border rounded-lg p-4 h-96 overflow-y-auto mb-4 bg-gray-50">
+      <div
+        v-for="(msg, index) in messages"
+        :key="index"
+        class="mb-4"
+        :class="msg.role === 'user' ? 'text-right' : 'text-left'"
+      >
+        <div
+          class="inline-block px-4 py-2 rounded-lg max-w-[80%]"
+          :class="msg.role === 'user' 
+            ? 'bg-primary-500 text-white' 
+            : 'bg-white border border-gray-200'"
+        >
+          <p class="text-sm whitespace-pre-wrap">{{ msg.content }}</p>
+          <span class="text-xs opacity-70">{{ msg.timestamp }}</span>
+        </div>
+      </div>
+      
+      <div v-if="loading" class="text-center">
+        <span class="inline-block animate-pulse text-gray-500">AI 思考中...</span>
+      </div>
+    </div>
+    
+    <!-- Input -->
+    <div class="flex gap-2">
+      <input
+        v-model="input"
+        @keyup.enter="sendMessage"
+        type="text"
+        placeholder="輸入問題，例如：為什麼今天下午電費這麼高？"
+        class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+        :disabled="loading"
+      />
+      <button
+        @click="sendMessage"
+        :disabled="loading || !input.trim()"
+        class="px-6 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        發送
+      </button>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref } from 'vue'
+import { auditApi } from '../api/endpoints'
+
+const messages = ref([
+  {
+    role: 'assistant',
+    content: '您好！我是 EcoGrid AI 助手，可以幫您分析用電數據、解答問題。請問有什麼可以幫助您的？',
+    timestamp: new Date().toLocaleTimeString()
+  }
+])
+
+const input = ref('')
+const loading = ref(false)
+
+const sendMessage = async () => {
+  if (!input.value.trim() || loading.value) return
+  
+  const userMessage = {
+    role: 'user',
+    content: input.value,
+    timestamp: new Date().toLocaleTimeString()
+  }
+  
+  messages.value.push(userMessage)
+  
+  const question = input.value
+  input.value = ''
+  loading.value = true
+  
+  try {
+    const response = await auditApi.query(question)
+    
+    messages.value.push({
+      role: 'assistant',
+      content: response.answer || '抱歉，無法回答此問題。',
+      timestamp: new Date().toLocaleTimeString()
+    })
+  } catch (error) {
+    messages.value.push({
+      role: 'assistant',
+      content: '抱歉，發生錯誤：' + error.message,
+      timestamp: new Date().toLocaleTimeString()
+    })
+  } finally {
+    loading.value = false
+  }
+}
+</script>

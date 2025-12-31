@@ -1,0 +1,137 @@
+<template>
+  <div class="space-y-6">
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div class="bg-white rounded-lg shadow-sm p-6">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm text-gray-600">當前負載</p>
+            <p class="text-2xl font-bold text-gray-900">
+              {{ summary?.current_load_kw?.toFixed(1) || '0.0' }} <span class="text-sm">kW</span>
+            </p>
+          </div>
+          <div class="text-4xl">⚡</div>
+        </div>
+      </div>
+      
+      <div class="bg-white rounded-lg shadow-sm p-6">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm text-gray-600">綠電比例</p>
+            <p class="text-2xl font-bold text-primary-600">
+              {{ summary?.renewable_ratio?.toFixed(1) || '0.0' }} <span class="text-sm">%</span>
+            </p>
+          </div>
+          <div class="text-4xl">🌿</div>
+        </div>
+      </div>
+      
+      <div class="bg-white rounded-lg shadow-sm p-6">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm text-gray-600">今日成本</p>
+            <p class="text-2xl font-bold text-gray-900">
+              {{ (summary?.estimated_cost_today || 0).toLocaleString() }} <span class="text-sm">NTD</span>
+            </p>
+          </div>
+          <div class="text-4xl">💰</div>
+        </div>
+      </div>
+      
+      <div class="bg-white rounded-lg shadow-sm p-6">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm text-gray-600">電池狀態</p>
+            <p class="text-2xl font-bold text-secondary-600">
+              {{ ((summary?.battery_soc || 0) * 100).toFixed(0) }} <span class="text-sm">%</span>
+            </p>
+          </div>
+          <div class="text-4xl">🔋</div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- TOU Period -->
+    <div class="bg-white rounded-lg shadow-sm p-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="text-sm text-gray-600">目前電價時段：</span>
+          <span class="ml-2 px-3 py-1 rounded-full text-sm font-medium"
+                :class="touPeriodClass">
+            {{ touPeriodText }}
+          </span>
+        </div>
+        <div class="text-lg font-bold">
+          {{ summary?.current_tariff?.toFixed(2) || '0.00' }} NTD/kWh
+        </div>
+      </div>
+    </div>
+    
+    <!-- Chart -->
+    <div class="bg-white rounded-lg shadow-sm p-6">
+      <EnergyChart
+        v-if="chartData.timestamps.length > 0"
+        :data="chartData"
+        title="24小時用電趨勢"
+        height="400px"
+      />
+      <div v-else class="text-center py-12 text-gray-500">
+        暫無圖表數據
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { useDashboardStore } from '../stores/dashboard'
+import { dashboardApi } from '../api/endpoints'
+import EnergyChart from '../components/EnergyChart.vue'
+
+const dashboardStore = useDashboardStore()
+const summary = computed(() => dashboardStore.summary)
+
+const chartData = ref({
+  timestamps: [],
+  series: {}
+})
+
+const touPeriodText = computed(() => {
+  const period = summary.value?.tou_period
+  if (period === 'peak') return '尖峰'
+  if (period === 'half_peak') return '半尖峰'
+  return '離峰'
+})
+
+const touPeriodClass = computed(() => {
+  const period = summary.value?.tou_period
+  if (period === 'peak') return 'bg-red-100 text-red-700'
+  if (period === 'half_peak') return 'bg-yellow-100 text-yellow-700'
+  return 'bg-green-100 text-green-700'
+})
+
+const fetchData = async () => {
+  await dashboardStore.fetchSummary()
+  
+  // Fetch chart data (last 24 hours)
+  const endDate = new Date()
+  const startDate = new Date(endDate.getTime() - 24 * 60 * 60 * 1000)
+  
+  try {
+    const data = await dashboardApi.getChartData({
+      start_date: startDate.toISOString(),
+      end_date: endDate.toISOString(),
+      data_type: 'load'
+    })
+    chartData.value = data
+  } catch (error) {
+    console.error('Failed to fetch chart data:', error)
+  }
+}
+
+onMounted(() => {
+  fetchData()
+  // Auto-refresh every 30 seconds
+  setInterval(fetchData, 30000)
+})
+</script>

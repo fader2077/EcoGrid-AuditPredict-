@@ -1,0 +1,36 @@
+﻿    def query(self, user_query: str, context: Dict[str, Any]) -> str:
+        """Interactive query using direct LLM"""
+        self.initialize()
+        
+        logger.info(f"Processing query: {user_query}")
+        
+        if not self.agent or not hasattr(self.agent, 'llm') or not self.agent.llm:
+            return "LLM service not available"
+        
+        try:
+            from langchain_core.messages import SystemMessage, HumanMessage
+            
+            # Build context
+            context_str = ""
+            if context and 'recent_data' in context and context['recent_data']:
+                latest = context['recent_data'][-1]
+                load = latest.get('load_kw', 0)
+                solar = latest.get('solar_kw', 0)
+                wind = latest.get('wind_kw', 0)
+                context_str = f"Current Load: {load:.1f}kW, Solar: {solar:.1f}kW, Wind: {wind:.1f}kW"
+            
+            system_msg = f"You are EcoGrid AI assistant. Answer in Traditional Chinese. Be concise. {context_str}"
+            
+            messages = [
+                SystemMessage(content=system_msg),
+                HumanMessage(content=user_query)
+            ]
+            
+            response = self.agent.llm.invoke(messages)
+            result = response.content if hasattr(response, 'content') else str(response)
+            
+            return result
+                    
+        except Exception as e:
+            logger.error(f"Query failed: {e}")
+            return f"Query error: {str(e)}"

@@ -1,0 +1,157 @@
+<template>
+  <div class="space-y-6">
+    <div class="bg-white rounded-lg shadow-sm p-6">
+      <h2 class="text-xl font-bold mb-4">⚙️ TOU 時間電價優化</h2>
+      
+      <!-- Controls -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">優化時長（小時）</label>
+          <input
+            v-model.number="params.hours_ahead"
+            type="number"
+            min="1"
+            max="168"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg"
+          />
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">電池初始狀態</label>
+          <input
+            v-model.number="params.initial_soc"
+            type="number"
+            min="0"
+            max="1"
+            step="0.1"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg"
+          />
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">電池容量 (kWh)</label>
+          <input
+            v-model.number="params.battery_capacity_kwh"
+            type="number"
+            placeholder="預設 100"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg"
+          />
+        </div>
+      </div>
+      
+      <button
+        @click="startOptimization"
+        :disabled="loading"
+        class="px-6 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50"
+      >
+        {{ loading ? '優化中...' : '開始優化' }}
+      </button>
+    </div>
+    
+    <!-- Results -->
+    <div v-if="plan" class="space-y-6">
+      <!-- Summary -->
+      <div class="bg-white rounded-lg shadow-sm p-6">
+        <h3 class="text-lg font-bold mb-4">優化結果</h3>
+        
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div class="text-center p-4 bg-gray-50 rounded-lg">
+            <p class="text-sm text-gray-600">基準成本</p>
+            <p class="text-xl font-bold">NTD {{ plan.baseline_cost_ntd?.toLocaleString() }}</p>
+          </div>
+          <div class="text-center p-4 bg-primary-50 rounded-lg">
+            <p class="text-sm text-gray-600">優化成本</p>
+            <p class="text-xl font-bold text-primary-600">NTD {{ plan.optimized_cost_ntd?.toLocaleString() }}</p>
+          </div>
+          <div class="text-center p-4 bg-green-50 rounded-lg">
+            <p class="text-sm text-gray-600">節省金額</p>
+            <p class="text-xl font-bold text-green-600">NTD {{ plan.savings_ntd?.toLocaleString() }}</p>
+          </div>
+          <div class="text-center p-4 bg-blue-50 rounded-lg">
+            <p class="text-sm text-gray-600">節省比例</p>
+            <p class="text-xl font-bold text-blue-600">{{ plan.savings_percent?.toFixed(1) }}%</p>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Recommendations -->
+      <div class="bg-white rounded-lg shadow-sm p-6">
+        <h3 class="text-lg font-bold mb-4">💡 優化建議</h3>
+        <ul class="space-y-2">
+          <li v-for="(rec, index) in plan.recommendations" :key="index" class="flex items-start">
+            <span class="text-primary-500 mr-2">✓</span>
+            <span>{{ rec }}</span>
+          </li>
+        </ul>
+      </div>
+      
+      <!-- Schedule Chart -->
+      <div class="bg-white rounded-lg shadow-sm p-6">
+        <h3 class="text-lg font-bold mb-4">排程詳情</h3>
+        <EnergyChart
+          :data="scheduleChartData"
+          title="優化排程"
+          height="450px"
+        />
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed } from 'vue'
+import { optimizationApi } from '../api/endpoints'
+import EnergyChart from '../components/EnergyChart.vue'
+
+const params = ref({
+  hours_ahead: 24,
+  initial_soc: 0.5,
+  battery_capacity_kwh: null,
+  forecast_id: null
+})
+
+const loading = ref(false)
+const plan = ref(null)
+
+const scheduleChartData = computed(() => {
+  if (!plan.value?.schedule) return { timestamps: [], series: {} }
+  
+  return {
+    timestamps: plan.value.schedule.map(s => 
+      new Date(s.timestamp).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })
+    ),
+    series: {
+      '電網購電': plan.value.schedule.map(s => s.grid_buy_kw),
+      '電池': plan.value.schedule.map(s => s.battery_kw),
+      '太陽能': plan.value.schedule.map(s => s.solar_used_kw),
+      '電價': plan.value.schedule.map(s => s.tariff)
+    }
+  }
+})
+
+const startOptimization = async () => {
+  loading.value = true
+  try {
+    const result = await optimizationApi.optimize(params.value)
+    
+    // Poll for completion
+    const interval = setInterval(async () => {
+      const status = await optimizationApi.getStatus(result.task_id)
+      
+      if (status.status === 'completed') {
+        clearInterval(interval)
+        const planId = status.result.plan_id
+        plan.value = await optimizationApi.getPlan(planId)
+        loading.value = false
+      } else if (status.status === 'failed') {
+        clearInterval(interval)
+        alert('優化失敗：' + status.error_message)
+        loading.value = false
+      }
+    }, 2000)
+  } catch (error) {
+    console.error('Failed to start optimization:', error)
+    loading.value = false
+  }
+}
+</script>
